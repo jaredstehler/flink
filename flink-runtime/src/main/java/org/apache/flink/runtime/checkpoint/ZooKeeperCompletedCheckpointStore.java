@@ -25,7 +25,7 @@ import org.apache.flink.runtime.state.RetrievableStateHandle;
 import org.apache.flink.runtime.zookeeper.RetrievableStateStorageHelper;
 import org.apache.flink.runtime.zookeeper.ZooKeeperStateHandleStore;
 import org.apache.flink.util.FlinkException;
-import org.apache.flink.util.function.ConsumerWithException;
+import org.apache.flink.util.function.ThrowingConsumer;
 
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.utils.ZKPaths;
@@ -35,6 +35,8 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.ConcurrentModificationException;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -68,6 +70,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointStore {
 
 	private static final Logger LOG = LoggerFactory.getLogger(ZooKeeperCompletedCheckpointStore.class);
+
+	private static final Comparator<Tuple2<RetrievableStateHandle<CompletedCheckpoint>, String>> STRING_COMPARATOR = Comparator.comparing(o -> o.f1);
 
 	/** Curator ZooKeeper client. */
 	private final CuratorFramework client;
@@ -153,13 +157,15 @@ public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointSto
 		List<Tuple2<RetrievableStateHandle<CompletedCheckpoint>, String>> initialCheckpoints;
 		while (true) {
 			try {
-				initialCheckpoints = checkpointsInZooKeeper.getAllSortedByNameAndLock();
+				initialCheckpoints = checkpointsInZooKeeper.getAllAndLock();
 				break;
 			}
 			catch (ConcurrentModificationException e) {
 				LOG.warn("Concurrent modification while reading from ZooKeeper. Retrying.");
 			}
 		}
+
+		Collections.sort(initialCheckpoints, STRING_COMPARATOR);
 
 		int numberOfInitialCheckpoints = initialCheckpoints.size();
 
@@ -246,7 +252,7 @@ public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointSto
 		LOG.debug("Added {} to {}.", checkpoint, path);
 	}
 
-	private void tryRemoveCompletedCheckpoint(CompletedCheckpoint completedCheckpoint, ConsumerWithException<CompletedCheckpoint, Exception> discardCallback) {
+	private void tryRemoveCompletedCheckpoint(CompletedCheckpoint completedCheckpoint, ThrowingConsumer<CompletedCheckpoint, Exception> discardCallback) {
 		try {
 			if (tryRemove(completedCheckpoint.getCheckpointID())) {
 				executor.execute(() -> {

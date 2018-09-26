@@ -163,7 +163,7 @@ public class DispatcherHATest extends TestLogger {
 			UnregisteredMetricGroups.createUnregisteredJobManagerMetricGroup(),
 			null,
 			new MemoryArchivedExecutionGraphStore(),
-			new TestingJobManagerRunnerFactory(new CompletableFuture<>(), new CompletableFuture<>()),
+			new TestingJobManagerRunnerFactory(new CompletableFuture<>(), new CompletableFuture<>(), CompletableFuture.completedFuture(null)),
 			testingFatalErrorHandler,
 			fencingTokens);
 	}
@@ -302,9 +302,7 @@ public class DispatcherHATest extends TestLogger {
 		}
 
 		@Override
-		public void releaseJobGraph(JobID jobId) throws Exception {
-			throw new UnsupportedOperationException("Should not be called.");
-		}
+		public void releaseJobGraph(JobID jobId) throws Exception {}
 
 		@Override
 		public Collection<JobID> getJobIds() throws Exception {

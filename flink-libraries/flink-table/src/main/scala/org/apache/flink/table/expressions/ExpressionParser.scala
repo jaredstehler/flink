@@ -41,8 +41,10 @@ object ExpressionParser extends JavaTokenParsers with PackratParsers {
   case class Keyword(key: String)
 
   // Convert the keyword into an case insensitive Parser
+  // The pattern ensures that the keyword is not matched as a prefix, i.e.,
+  //   the keyword is not followed by a Java identifier character.
   implicit def keyword2Parser(kw: Keyword): Parser[String] = {
-    ("""(?i)\Q""" + kw.key + """\E""").r
+    ("""(?i)\Q""" + kw.key + """\E(?![_$\p{javaJavaIdentifierPart}])""").r
   }
 
   // Keyword
@@ -57,6 +59,7 @@ object ExpressionParser extends JavaTokenParsers with PackratParsers {
   lazy val TO_TIMESTAMP: Keyword = Keyword("toTimestamp")
   lazy val TRIM: Keyword = Keyword("trim")
   lazy val EXTRACT: Keyword = Keyword("extract")
+  lazy val TIMESTAMP_DIFF: Keyword = Keyword("timestampDiff")
   lazy val FLOOR: Keyword = Keyword("floor")
   lazy val CEIL: Keyword = Keyword("ceil")
   lazy val LOG: Keyword = Keyword("log")
@@ -83,6 +86,7 @@ object ExpressionParser extends JavaTokenParsers with PackratParsers {
   lazy val GET: Keyword = Keyword("get")
   lazy val FLATTEN: Keyword = Keyword("flatten")
   lazy val OVER: Keyword = Keyword("over")
+  lazy val DISTINCT: Keyword = Keyword("distinct")
   lazy val CURRENT_ROW: Keyword = Keyword("current_row")
   lazy val CURRENT_RANGE: Keyword = Keyword("current_range")
   lazy val UNBOUNDED_ROW: Keyword = Keyword("unbounded_row")
@@ -324,6 +328,9 @@ object ExpressionParser extends JavaTokenParsers with PackratParsers {
   lazy val suffixFlattening: PackratParser[Expression] =
     composite <~ "." ~ FLATTEN ~ opt("()") ^^ { e => Flattening(e) }
 
+  lazy val suffixDistinct: PackratParser[Expression] =
+    composite <~ "." ~ DISTINCT ~ opt("()") ^^ { e => DistinctAgg(e) }
+
   lazy val suffixAs: PackratParser[Expression] =
     composite ~ "." ~ AS ~ "(" ~ rep1sep(fieldReference, ",") ~ ")" ^^ {
       case e ~ _ ~ _ ~ _ ~ target ~ _ => Alias(e, target.head.name, target.tail.map(_.name))
@@ -345,6 +352,8 @@ object ExpressionParser extends JavaTokenParsers with PackratParsers {
     suffixGet |
     // expression with special identifier
     suffixIf |
+    // expression with distinct suffix modifier
+    suffixDistinct |
     // function call must always be at the end
     suffixFunctionCall | suffixFunctionCallOneArg
 
@@ -384,6 +393,11 @@ object ExpressionParser extends JavaTokenParsers with PackratParsers {
       case _ ~ _ ~ operand ~ _ ~ unit ~ _ => Extract(unit, operand)
     }
 
+  lazy val prefixTimestampDiff: PackratParser[Expression] =
+    TIMESTAMP_DIFF ~ "(" ~ timePointUnit ~ "," ~ expression ~ "," ~ expression ~ ")" ^^ {
+      case _ ~ _ ~ unit ~ _ ~ operand1 ~ _ ~ operand2 ~ _ => TimestampDiff(unit, operand1, operand2)
+    }
+
   lazy val prefixFloor: PackratParser[Expression] =
     FLOOR ~ "(" ~ expression ~ "," ~ timeIntervalUnit ~ ")" ^^ {
       case _ ~ _ ~ operand ~ _ ~ unit ~ _ => TemporalFloor(unit, operand)
@@ -412,6 +426,11 @@ object ExpressionParser extends JavaTokenParsers with PackratParsers {
   lazy val prefixToTime: PackratParser[Expression] =
     TO_TIME ~ "(" ~> expression <~ ")" ^^ { e => Cast(e, SqlTimeTypeInfo.TIME) }
 
+  lazy val prefixDistinct: PackratParser[Expression] =
+    functionIdent ~ "." ~ DISTINCT ~ "(" ~ repsep(expression, ",") ~ ")" ^^ {
+      case name ~ _ ~ _ ~ _ ~ args ~ _ => DistinctAgg(Call(name.toUpperCase, args))
+  }
+
   lazy val prefixAs: PackratParser[Expression] =
     AS ~ "(" ~ expression ~ "," ~ rep1sep(fieldReference, ",") ~ ")" ^^ {
     case _ ~ _ ~ e ~ _ ~ target ~ _ => Alias(e, target.head.name, target.tail.map(_.name))
@@ -424,10 +443,13 @@ object ExpressionParser extends JavaTokenParsers with PackratParsers {
     prefixAs| prefixToTimestamp | prefixToTime | prefixToDate |
     // expressions that take enumerations
     prefixCast | prefixTrim | prefixTrimWithoutArgs | prefixExtract | prefixFloor | prefixCeil |
+      prefixTimestampDiff |
     // expressions that take literals
     prefixGet |
     // expression with special identifier
     prefixIf |
+    // expression with prefix distinct
+    prefixDistinct |
     // function call must always be at the end
     prefixFunctionCall | prefixFunctionCallOneArg
 
